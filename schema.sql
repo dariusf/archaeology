@@ -57,3 +57,13 @@ create table commit_files (
   foreign key (sha) references commits(sha),
   foreign key (file) references files(name)
 );
+
+create table commit_diff_tokens (
+sha text,
+file text,
+plus bool,
+token text,
+primary key (sha, file, plus, token),
+foreign key (sha) references commits(sha),
+foreign key (file) references files(name)
+);

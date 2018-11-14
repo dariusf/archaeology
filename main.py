@@ -29,7 +29,7 @@ def get_github_issues(repo, c):
 
   for issue in g.get_repo(repo, lazy=True).get_issues(state='all'):
     print(issue.number)
-    c.execute('''insert into issues values(?, ?, ?)''', (issue.number, issue.title, issue.body or ''))
+    c.execute('''insert or ignore into issues values(?, ?, ?)''', (issue.number, issue.title, issue.body or ''))
 
     for r in get_issue_references(issue.body or ''):
       c.execute('''insert or ignore into issue_references values(?, ?)''', (issue.number, r))
@@ -37,15 +37,15 @@ def get_github_issues(repo, c):
     if issue.pull_request:
       pr = issue.as_pull_request()
       for commit in pr.get_commits():
-        c.execute('''insert into pr_commits values(?, ?)''', (issue.number, commit.sha))
+        c.execute('''insert or ignore into pr_commits values(?, ?)''', (issue.number, commit.sha))
 
     for label in issue.labels:
       c.execute('''insert or ignore into labels values(?)''', (label.name,))
-      c.execute('''insert into issue_labels values(?, ?)''', (issue.number, label.name))
+      c.execute('''insert or ignore into issue_labels values(?, ?)''', (issue.number, label.name))
 
     comment_id = 0
     for comment in issue.get_comments():
-      c.execute('''insert into comments values(?, ?, ?, ?)''', (comment_id, issue.number, comment.user.login, comment.body))
+      c.execute('''insert or ignore into comments values(?, ?, ?, ?)''', (comment_id, issue.number, comment.user.login, comment.body))
       for r in get_issue_references(comment.body):
         c.execute('''insert or ignore into issue_references values(?, ?)''', (issue.number, r))
       comment_id += 1
@@ -55,13 +55,30 @@ def get_github_issues(repo, c):
 
 
 def get_repo_info(repo, c):
+  def tokens_in_diff(diff):
+    if "@@" not in diff:
+      return [],[]
+    no_atat = diff.split("@@")[-1]
+    lines = no_atat.split('\n')
+    additions = '\n'.join([line.lstrip('+') for line in lines if line.startswith('+')])
+    removals = '\n'.join([line.lstrip('-') for line in lines if line.startswith('-')])
+    pattern = r'\s|\(|\)|,'
+    return re.split(pattern, additions), re.split(pattern, removals)
+
   local = 'https://github.com/{}.git'.format(repo)
   commit_count = 0
   for commit in RepositoryMining(local).traverse_commits():
-    c.execute('''insert into commits values(?)''', (commit.hash,))
+    c.execute('''insert or ignore into commits values(?)''', (commit.hash,))
     for mod in commit.modifications:
       c.execute('''insert or ignore into files values(?)''', (mod.filename,))
       c.execute('''insert or ignore into commit_files values(?, ?)''', (commit.hash, mod.filename))
+      plus_tokens, minus_tokens = tokens_in_diff(mod.diff)
+      for tok in plus_tokens:
+        c.execute('''insert or ignore into commit_diff_tokens values(?,?,?,?)''', (commit.hash, mod.filename, True, tok))
+      for tok in minus_tokens:
+        c.execute('''insert or ignore into commit_diff_tokens values(?,?,?,?)''', (commit.hash, mod.filename, False, tok))
+
+
     commit_count += 1
     if commit_count % 100 == 0:
       print(commit_count)
@@ -81,7 +98,7 @@ def main():
       schema = f.read()
     c.executescript(schema)
 
-  repo = 'HubTurbo/HubTurbo'
+  repo = 'kanghj/test'
   print('issues...')
   get_github_issues(repo, c)
 
